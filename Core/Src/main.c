@@ -41,6 +41,7 @@
 /* ===== [USER CODE BEGIN PV] 전역 추가 ===== */
 #define PKT_LEN   8
 #define SOF       0xFF
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,7 +56,6 @@
 static uint8_t rx1;
 static uint8_t pkt[PKT_LEN];  // 프레임 버퍼
 static uint8_t pidx = 0;      // 수신 인덱스
-bool move = false;
 
 /* USER CODE END PV */
 
@@ -63,10 +63,6 @@ bool move = false;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-/* 옵션: 정지 */
-
-
-/* 방향 처리 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if (huart == &huart1) {
