@@ -3,6 +3,7 @@
 
 #include "stm32f4xx_hal.h"
 
+void stopMove();
 void moveForward();
 void moveBack();
 void moveLeft();
