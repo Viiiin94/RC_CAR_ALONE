@@ -16,6 +16,13 @@
 #define TRIG2_PORT	GPIOB
 #define TRIG2_PIN	GPIO_PIN_12
 
-void HCSR04_TRIGGER();
+#define SENSOR_RIGHT    0
+#define SENSOR_FORWARD  1
+#define SENSOR_LEFT     2
+
+#define DISTANCE_TEST 100  // cm
+
+void getUltraSonicTrigger();
+uint8_t getDistance(uint8_t sensor_idx);
 
 #endif /* INC_ULTRASONIC_H_ */

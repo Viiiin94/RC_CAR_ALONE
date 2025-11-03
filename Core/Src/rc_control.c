@@ -1,5 +1,12 @@
 #include "rc_control.h"
 
+static uint16_t current_speed = SPEED_NORMAL;
+
+void setSpeed(uint16_t speed)
+{
+	current_speed = speed;
+}
+
 void stopMove(void){
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, 0);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1, 0);
@@ -17,8 +24,8 @@ void moveForward()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 1);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 
-	TIM3->CCR1 = 1000;
-	TIM3->CCR2 = 1000;
+	TIM3->CCR1 = current_speed;
+	TIM3->CCR2 = current_speed;
 }
 
 void moveBack()
@@ -28,8 +35,8 @@ void moveBack()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 0);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 
-	TIM3->CCR1 = 1000;
-	TIM3->CCR2 = 1000;
+	TIM3->CCR1 = current_speed;
+	TIM3->CCR2 = current_speed;
 }
 
 void moveLeft()
@@ -39,8 +46,8 @@ void moveLeft()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 0);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 
-	TIM3->CCR1 = 1000;
-	TIM3->CCR2 = 1000;
+	TIM3->CCR1 = current_speed;
+	TIM3->CCR2 = current_speed;
 }
 
 void moveRight()
@@ -50,8 +57,8 @@ void moveRight()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 1);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 
-	TIM3->CCR1 = 1000;
-	TIM3->CCR2 = 1000;
+	TIM3->CCR1 = current_speed;
+	TIM3->CCR2 = current_speed;
 }
 
 void onPressJoyStickKey(uint16_t button)

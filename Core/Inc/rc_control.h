@@ -9,6 +9,11 @@
 #define RIGHT   0x0008
 #define STOP	0x0000
 
+#define SPEED_NORMAL  500
+#define SPEED_SLOW    300
+
+void setSpeed(uint16_t speed);
+
 void stopMove();
 void moveForward();
 void moveBack();
