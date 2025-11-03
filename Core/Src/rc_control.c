@@ -1,4 +1,3 @@
-
 #include "rc_control.h"
 
 void stopMove(void){

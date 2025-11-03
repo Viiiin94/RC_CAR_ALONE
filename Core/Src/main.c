@@ -26,7 +26,11 @@
 /* USER CODE BEGIN Includes */
 
 #include "stdbool.h"
+#include "string.h"
 #include "rc_control.h"
+#include "ultrasonic.h"
+#include "delay_us.h"
+#include "stdio.h"
 
 /* USER CODE END Includes */
 
@@ -38,7 +42,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-/* ===== [USER CODE BEGIN PV] 전역 추가 ===== */
 #define PKT_LEN   8
 #define SOF       0xFF
 
@@ -47,15 +50,29 @@
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
+int _write(int file, unsigned char* p, int len)
+{
+	HAL_StatusTypeDef status = HAL_UART_Transmit(&huart2, p, len, 100);
+	return (status == HAL_OK ? len : 0);
+}
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
 
-static uint8_t rx1;
+// 조이스틱 버퍼
+static uint8_t rx1, rx2;
 static uint8_t pkt[PKT_LEN];  // 프레임 버퍼
 static uint8_t pidx = 0;      // 수신 인덱스
+
+// 초음파센서 값
+uint16_t IC_Value1[3] = {0};  // RISING EDGE 캡처 값
+uint16_t IC_Value2[3] = {0};  // FALLING EDGE 캡처 값
+uint16_t echoTime[3] = {0};   // 펄스 길이 (µs)
+uint8_t captureFlag[3] = {0}; // 캡처 플래그 (0: RISING 대기, 1: FALLING 대기)
+uint8_t distance[3] = {0};    // 최종 거리 (cm)
 
 /* USER CODE END PV */
 
@@ -80,6 +97,70 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			}
 		}
 		HAL_UART_Receive_IT(&huart1, &rx1, 1);  // 재등록
+	}
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+	// TIM1에서 인터럽트가 발생했을 때만 처리
+	if(htim->Instance == TIM1)
+	{
+		int sensor_idx = -1;
+		uint32_t TIM_Channel = 0;
+
+		// 발생 채널에 따라 인덱스 결정
+		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1) {
+			sensor_idx = 0;
+			TIM_Channel = TIM_CHANNEL_1;
+		} else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2) {
+			sensor_idx = 1;
+			TIM_Channel = TIM_CHANNEL_2;
+		} else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3) {
+			sensor_idx = 2;
+			TIM_Channel = TIM_CHANNEL_3;
+		}
+
+		if (sensor_idx != -1)
+		{
+			if(captureFlag[sensor_idx] == 0) // 첫 번째 캡처 (RISING EDGE)
+			{
+				IC_Value1[sensor_idx] = HAL_TIM_ReadCapturedValue(htim, TIM_Channel);
+				captureFlag[sensor_idx] = 1;	// 캡처 플래그 세움
+
+				// 다음 캡처를 위해 폴링을 FALLING EDGE로 변경
+				__HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_Channel, TIM_INPUTCHANNELPOLARITY_FALLING);
+			}
+			else if(captureFlag[sensor_idx] == 1) // 두 번째 캡처 (FALLING EDGE)
+			{
+				IC_Value2[sensor_idx] = HAL_TIM_ReadCapturedValue(htim, TIM_Channel);
+
+				// 펄스 길이 계산 (오버플로우 처리 포함)
+				if(IC_Value2[sensor_idx] > IC_Value1[sensor_idx])
+				{
+					echoTime[sensor_idx] = IC_Value2[sensor_idx] - IC_Value1[sensor_idx];
+				}
+				else
+				{
+					echoTime[sensor_idx] = (0xffff - IC_Value1[sensor_idx]) + IC_Value2[sensor_idx];
+				}
+
+				// 거리 계산 (cm)
+				distance[sensor_idx] = echoTime[sensor_idx] / 58;
+				captureFlag[sensor_idx] = 0; // 플래그 초기화
+
+				// 다음 측정을 위해 폴링을 RISING EDGE로 복원
+				__HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_Channel, TIM_INPUTCHANNELPOLARITY_RISING);
+
+				// ★★★ 핵심 수정: 측정이 완료되면 해당 채널의 캡처 인터럽트 비활성화 ★★★
+				if (sensor_idx == 0) {
+					__HAL_TIM_DISABLE_IT(htim, TIM_IT_CC1);
+				} else if (sensor_idx == 1) {
+					__HAL_TIM_DISABLE_IT(htim, TIM_IT_CC2);
+				} else if (sensor_idx == 2) {
+					__HAL_TIM_DISABLE_IT(htim, TIM_IT_CC3);
+				}
+			}
+		}
 	}
 }
 
@@ -122,12 +203,26 @@ int main(void)
   MX_TIM3_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_TIM11_Init();
+  MX_TIM1_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 
+	// 바퀴 제어
 	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
+	// 초음파 센서 제어
+	HAL_TIM_Base_Start(&htim11);
+	HAL_TIM_Base_Start(&htim1);
+
+	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2);
+	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3);
+
+	// 추후에 할 블루투스 모듈연결 AT command
 	HAL_UART_Receive_IT(&huart1, &rx1, sizeof(rx1));
+	HAL_UART_Receive_IT(&huart2, &rx2, sizeof(rx2));  // PC (추가!)
 
   /* USER CODE END 2 */
 
@@ -135,7 +230,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1)
 	{
+		HCSR04_TRIGGER();
+		HAL_Delay(60);
 
+		printf("Right: %d cm \t", distance[0]);
+		printf("Forward: %d cm \t", distance[1]);
+		printf("left: %d cm \t\n", distance[2]);
+		HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -160,10 +261,14 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 100;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -173,12 +278,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
