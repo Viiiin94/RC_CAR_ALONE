@@ -27,23 +27,38 @@
 
 #include "stdbool.h"
 #include "string.h"
+#include "stdio.h"
+
 #include "rc_control.h"
 #include "ultrasonic.h"
+#include "joystick_pairing.h"
 #include "delay_us.h"
-#include "stdio.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef enum {
+	STATE_NORMAL,           // 정상 주행
+	STATE_MEASURING,        // 센서 측정 중
+	STATE_STOPPING,         // 정지 중
+	STATE_TURNING           // 회전 중
+} DriveState;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define PKT_LEN   8
-#define SOF       0xFF
+#define PKT_LEN   8						// 아이폰 조이스틱 버튼 헥사코드 패킷
+#define SOF       0xFF					// 첫 번째 패킷 값이 FF로 고정
+
+#define SLOW_DISTANCE	 40
+#define STOP_DISTANCE    35
+#define TURN_DISTANCE    18
+
+#define ULTRASONIC_DETECTING_TIME 60
 
 /* USER CODE END PD */
 
@@ -63,16 +78,21 @@ int _write(int file, unsigned char* p, int len)
 /* USER CODE BEGIN PV */
 
 // 조이스틱 버퍼
-static uint8_t rx1, rx2;
-static uint8_t pkt[PKT_LEN];  // 프레임 버퍼
-static uint8_t pidx = 0;      // 수신 인덱스
+static uint8_t rx1, rx2;	  	// rx1 USART1 / rx2 USART2
+static uint8_t pkt[PKT_LEN];  	// 프레임 버퍼
+static uint8_t pidx = 0;      	// 수신 인덱스
 
 // 초음파센서 값
-uint16_t IC_Value1[3] = {0};  // RISING EDGE 캡처 값
-uint16_t IC_Value2[3] = {0};  // FALLING EDGE 캡처 값
-uint16_t echoTime[3] = {0};   // 펄스 길이 (µs)
-uint8_t captureFlag[3] = {0}; // 캡처 플래그 (0: RISING 대기, 1: FALLING 대기)
-uint8_t distance[3] = {0};    // 최종 거리 (cm)
+uint16_t IC_Value1[3] = {0};
+uint16_t IC_Value2[3] = {0};
+uint16_t echoTime[3] = {0};
+uint8_t captureFlag[3] = {0};
+uint8_t distance[3] = {0};
+
+static uint32_t lastSensorTime = 0;
+static uint32_t measureStartTime = 0;
+static uint32_t stateStartTime = 0;
+static DriveState currentState = STATE_NORMAL;
 
 /* USER CODE END PV */
 
@@ -80,6 +100,7 @@ uint8_t distance[3] = {0};    // 최종 거리 (cm)
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
+// 아이폰 블루투스 감지된 값 처리 콜백함수
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if (huart == &huart1)
@@ -100,7 +121,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			pkt[pidx++] = c;
 			if (pidx == PKT_LEN)
 			{
-				uint16_t buttons = (uint16_t)pkt[6] | ((uint16_t)pkt[7] << 8); // LE
+				uint16_t buttons = (uint16_t)pkt[6] | ((uint16_t)pkt[7] << 8); // 0x0001, 0x0002, 0x0004, 0x0008 << 이런식으로 나옴
 				onPressJoyStickKey(buttons);
 				pidx = 0;
 			}
@@ -148,7 +169,6 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 			{
 				IC_Value2[sensor_idx] = HAL_TIM_ReadCapturedValue(htim, TIM_Channel);
 
-				// 펄스 길이 계산 (오버플로우 처리 포함)
 				if(IC_Value2[sensor_idx] > IC_Value1[sensor_idx])
 				{
 					echoTime[sensor_idx] = IC_Value2[sensor_idx] - IC_Value1[sensor_idx];
@@ -158,7 +178,6 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 					echoTime[sensor_idx] = (0xffff - IC_Value1[sensor_idx]) + IC_Value2[sensor_idx];
 				}
 
-				// 거리 계산 (cm)
 				distance[sensor_idx] = echoTime[sensor_idx] / 58;
 				captureFlag[sensor_idx] = 0; // 플래그 초기화
 
@@ -238,44 +257,141 @@ int main(void)
 	HAL_UART_Receive_IT(&huart1, &rx1, sizeof(rx1));
 	HAL_UART_Receive_IT(&huart2, &rx2, sizeof(rx2));
 
+	// 초기 속도 설정
+	setSpeed(400);
+
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1)
 	{
-		getUltraSonicTrigger();
-		HAL_Delay(60);
+		uint32_t currentTime = HAL_GetTick();
 
-		uint8_t forward_distance = distance[SENSOR_FORWARD];
+		switch(currentState)
+			{
+				case STATE_NORMAL:
+				{
+					if(currentTime - lastSensorTime >= 60)
+					{
+						getUltraSonicTrigger();
+						measureStartTime = currentTime;
+						currentState = STATE_MEASURING;
+					}
 
-		if(forward_distance < 30 && forward_distance > 0)
-		{
-			// 너무 가까우면 정지
-			stopMove();
-			printf("[STOP]\n");
-		}
-		else if(forward_distance <= 100 && forward_distance > 0)
-		{
-			// 100cm 이하면 천천히 전진
-			setSpeed(SPEED_SLOW);
-//			moveForward();  // 👈 여기!
-			printf("[SLOW FORWARD]\n");
-		}
-		else
-		{
-			// 100cm 초과면 빠르게 전진
-			setSpeed(SPEED_NORMAL);
-//			moveForward();  // 👈 여기!
-			printf("[NORMAL FORWARD]\n");
-		}
+					// 주행 (이전 센서 값으로)
+					uint8_t right = distance[SENSOR_RIGHT];
+					uint8_t forward = distance[SENSOR_FORWARD];
+					uint8_t left = distance[SENSOR_LEFT];
 
-		printf("\n");
+					if(forward < SLOW_DISTANCE && forward > 0)
+					{
+						setSpeed(400);
+
+						if(forward < STOP_DISTANCE && forward > 0)
+						{
+							stopMove();
+							currentState = STATE_STOPPING;
+							stateStartTime = currentTime;
+						}
+					}
+					else if(left < TURN_DISTANCE && left > 0)
+					{
+						turnRightForward();
+					}
+					else if(right < TURN_DISTANCE && right > 0)
+					{
+						turnLeftForward();
+					}
+					else
+					{
+						setSpeed(500);
+						moveForward();
+					}
+					break;
+				}
+
+				case STATE_MEASURING:
+				{
+					// 60ms 후 측정 완료
+					if(currentTime - measureStartTime >= 60)
+					{
+						uint8_t right = distance[SENSOR_RIGHT];
+						uint8_t forward = distance[SENSOR_FORWARD];
+						uint8_t left = distance[SENSOR_LEFT];
+
+						printf("R:%3d | F:%3d | L:%3d\n", right, forward, left);
+
+						lastSensorTime = currentTime;
+						currentState = STATE_NORMAL;
+					}
+
+					// 측정 중에도 기존 동작 유지
+					// (이전 센서 값으로 계속 주행)
+					break;
+				}
+
+				case STATE_STOPPING:
+				{
+					uint32_t elapsed = currentTime - stateStartTime;
+
+					if(elapsed < 150)
+					{
+						stopMove();
+					}
+					else
+					{
+						uint8_t left = distance[SENSOR_LEFT];
+						uint8_t right = distance[SENSOR_RIGHT];
+
+						setSpeed(400);
+						if(left > right)
+						{
+							turnLeftForward();
+						}
+						else
+						{
+							turnRightForward();
+						}
+
+						currentState = STATE_TURNING;
+						stateStartTime = currentTime;
+					}
+					break;
+				}
+
+				case STATE_TURNING:
+				{
+					uint32_t elapsed = currentTime - stateStartTime;
+
+					uint8_t left = distance[SENSOR_LEFT];
+					uint8_t right = distance[SENSOR_RIGHT];
+
+					if(elapsed < 300)
+					{
+						if(left > right)
+						{
+							turnLeftForward();
+						}
+						else
+						{
+							turnRightForward();
+						}
+					}
+					else  // 회전 완료, 정상 주행 복귀
+					{
+						currentState = STATE_NORMAL;
+					}
+					break;
+				}
+			}
+		HAL_Delay(5);
+	}
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-	}
-	/* USER CODE END 3 */
+		/* USER CODE END 3 */
+
 }
 
 /**

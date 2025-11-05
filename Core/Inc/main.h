@@ -73,6 +73,14 @@ void Error_Handler(void);
 #define TIM3_CH2_ENB_GPIO_Port GPIOA
 #define ultra_Output1_Pin GPIO_PIN_2
 #define ultra_Output1_GPIO_Port GPIOB
+#define ultra_Output2_Pin GPIO_PIN_12
+#define ultra_Output2_GPIO_Port GPIOB
+#define TIM1_CH1_RIGHT_Pin GPIO_PIN_8
+#define TIM1_CH1_RIGHT_GPIO_Port GPIOA
+#define TIM1_CH2_FORWARD_Pin GPIO_PIN_9
+#define TIM1_CH2_FORWARD_GPIO_Port GPIOA
+#define TIM1_CH3_LEFT_Pin GPIO_PIN_10
+#define TIM1_CH3_LEFT_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

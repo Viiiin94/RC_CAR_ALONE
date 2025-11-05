@@ -20,8 +20,6 @@
 #define SENSOR_FORWARD  1
 #define SENSOR_LEFT     2
 
-#define DISTANCE_TEST 100  // cm
-
 void getUltraSonicTrigger();
 uint8_t getDistance(uint8_t sensor_idx);
 
