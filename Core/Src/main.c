@@ -332,11 +332,11 @@ int main(void)
 				currentState = STATE_STOPPING;
 				stateStartTime = currentTime;
 			}
-			else if (left < SIDE_DISTANCE && forward > STOP_DISTANCE)
+			else if (left < SIDE_DISTANCE && forward > 0)
 			{
 				moveLeft();
 			}
-			else if (right < SIDE_DISTANCE && forward > STOP_DISTANCE)
+			else if (right < SIDE_DISTANCE && forward > 0)
 			{
 				moveRight();
 			}
@@ -372,7 +372,7 @@ int main(void)
 			static uint8_t prevForward = 0;
 
 			// 정면 거리의 급격한 증가 감지 (예: 30cm 이상)
-			if (forward > prevForward + 25 || forward > STOP_DISTANCE + 10) {
+			if (forward > prevForward + 30 || forward > STOP_DISTANCE + 20) {
 				clearCount++;
 				if (clearCount >= 2) { // 2회 이상 연속 확인 시 복귀
 					currentState = STATE_NORMAL;
@@ -389,7 +389,7 @@ int main(void)
 
 			bool turn_left = (left >= right);
 
-			setSpeed(BASE_SPEED); // 회전 속도 설정
+			setSpeed(BASE_SPEED + 25); // 회전 속도 설정
 			if (turn_left) {
 				turnLeftForward();
 			} else {

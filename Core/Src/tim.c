@@ -84,7 +84,6 @@ void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sConfigIC.ICFilter = 4;
   if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
