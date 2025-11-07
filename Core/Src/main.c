@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -28,6 +29,7 @@
 #include "stdbool.h"
 #include "string.h"
 #include "stdio.h"
+#include "stdlib.h"
 
 #include "rc_control.h"
 #include "ultrasonic.h"
@@ -40,10 +42,9 @@
 /* USER CODE BEGIN PTD */
 
 typedef enum {
-	STATE_NORMAL,           // 정상 주행
-	STATE_MEASURING,        // 센서 측정 중
-	STATE_STOPPING,         // 정지 중
-	STATE_TURNING           // 회전 중
+	STATE_NORMAL,              // 정상 주행
+	STATE_STOPPING,            // 정지 중
+	STATE_TURNING,             // 회전 중
 } DriveState;
 
 /* USER CODE END PTD */
@@ -51,14 +52,19 @@ typedef enum {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define PKT_LEN   8						// 아이폰 조이스틱 버튼 헥사코드 패킷
-#define SOF       0xFF					// 첫 번째 패킷 값이 FF로 고정
+#define PKT_LEN   			8				// 아이폰 조이스틱 버튼 헥사코드 패킷
+#define SOF       			0xFF			// 첫 번째 패킷 값이 FF로 고정
 
-#define SLOW_DISTANCE	 40
-#define STOP_DISTANCE    35
-#define TURN_DISTANCE    18
+#define SLOW_DISTANCE 		80
+#define STOP_DISTANCE    	50              // 정면 정지 거리
+#define SIDE_DISTANCE    	8              // 좌우 회피 거리
 
-#define ULTRASONIC_DETECTING_TIME 60
+#define ULTRASONIC_DETECTING_TIME 50		// 초음파 센서 재 인식 시간
+#define STOP_TIME			200
+#define BASE_SPEED 			350
+
+#define DMA_BUFFER_SIZE 	5
+
 
 /* USER CODE END PD */
 
@@ -82,15 +88,22 @@ static uint8_t rx1, rx2;	  	// rx1 USART1 / rx2 USART2
 static uint8_t pkt[PKT_LEN];  	// 프레임 버퍼
 static uint8_t pidx = 0;      	// 수신 인덱스
 
-// 초음파센서 값
+// 초음파센서 원본 값
 uint16_t IC_Value1[3] = {0};
 uint16_t IC_Value2[3] = {0};
 uint16_t echoTime[3] = {0};
 uint8_t captureFlag[3] = {0};
-uint8_t distance[3] = {0};
+uint8_t distance[3] = {0};       // 원본 거리
 
+// DMA QUEUE BUFF
+uint8_t dmaDistanceBuffer[3][DMA_BUFFER_SIZE] __attribute__((aligned(4)));
+volatile uint8_t dmaBufferIndex[3] = {0};
+volatile uint32_t dmaBufferSum[3] = {0};
+volatile uint16_t dmaBufferCount[3] = {0};
+uint8_t avgDistance[3] = {0};
+
+// 상태 관리
 static uint32_t lastSensorTime = 0;
-static uint32_t measureStartTime = 0;
 static uint32_t stateStartTime = 0;
 static DriveState currentState = STATE_NORMAL;
 
@@ -99,6 +112,34 @@ static DriveState currentState = STATE_NORMAL;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+
+void addToDMABuffer(uint8_t sensor_idx, uint8_t newValue)
+{
+	if(sensor_idx >= 3) return;
+
+	// 버퍼가 가득 찬 경우 가장 오래된 값 제거
+	if(dmaBufferCount[sensor_idx] >= DMA_BUFFER_SIZE)
+	{
+		dmaBufferSum[sensor_idx] -= dmaDistanceBuffer[sensor_idx][dmaBufferIndex[sensor_idx]];
+	}
+	else
+	{
+		dmaBufferCount[sensor_idx]++;
+	}
+
+	// 새 값 추가
+	dmaDistanceBuffer[sensor_idx][dmaBufferIndex[sensor_idx]] = newValue;
+	dmaBufferSum[sensor_idx] += newValue;
+
+	// 인덱스 순환
+	dmaBufferIndex[sensor_idx] = (dmaBufferIndex[sensor_idx] + 1) % DMA_BUFFER_SIZE;
+
+	// 평균 자동 계산
+	if(dmaBufferCount[sensor_idx] > 0)
+	{
+		avgDistance[sensor_idx] = dmaBufferSum[sensor_idx] / dmaBufferCount[sensor_idx];
+	}
+}
 
 // 아이폰 블루투스 감지된 값 처리 콜백함수
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -121,24 +162,22 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			pkt[pidx++] = c;
 			if (pidx == PKT_LEN)
 			{
-				uint16_t buttons = (uint16_t)pkt[6] | ((uint16_t)pkt[7] << 8); // 0x0001, 0x0002, 0x0004, 0x0008 << 이런식으로 나옴
+				uint16_t buttons = (uint16_t)pkt[6] | ((uint16_t)pkt[7] << 8);
 				onPressJoyStickKey(buttons);
 				pidx = 0;
 			}
 		}
-		HAL_UART_Receive_IT(&huart1, &rx1, 1);  // 재등록
+		HAL_UART_Receive_IT(&huart1, &rx1, 1);
 	}
 }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-	// TIM1에서 인터럽트가 발생했을 때만 처리
 	if(htim->Instance == TIM1)
 	{
 		int sensor_idx = -1;
 		uint32_t TIM_Channel = 0;
 
-		// 발생 채널에 따라 인덱스 결정
 		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
 		{
 			sensor_idx = 0;
@@ -157,15 +196,13 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 
 		if (sensor_idx != -1)
 		{
-			if(captureFlag[sensor_idx] == 0) // 첫 번째 캡처 (RISING EDGE)
+			if(captureFlag[sensor_idx] == 0)
 			{
 				IC_Value1[sensor_idx] = HAL_TIM_ReadCapturedValue(htim, TIM_Channel);
 				captureFlag[sensor_idx] = 1;
-
-				// 다음 캡처를 위해 폴링을 FALLING EDGE로 변경
 				__HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_Channel, TIM_INPUTCHANNELPOLARITY_FALLING);
 			}
-			else if(captureFlag[sensor_idx] == 1) // 두 번째 캡처 (FALLING EDGE)
+			else if(captureFlag[sensor_idx] == 1)
 			{
 				IC_Value2[sensor_idx] = HAL_TIM_ReadCapturedValue(htim, TIM_Channel);
 
@@ -179,12 +216,13 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				}
 
 				distance[sensor_idx] = echoTime[sensor_idx] / 58;
-				captureFlag[sensor_idx] = 0; // 플래그 초기화
 
-				// 다음 측정을 위해 폴링을 RISING EDGE로 복원
+				// ★★★ DMA 버퍼에 추가 ★★★
+				addToDMABuffer(sensor_idx, distance[sensor_idx]);
+
+				captureFlag[sensor_idx] = 0;
 				__HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_Channel, TIM_INPUTCHANNELPOLARITY_RISING);
 
-				// ★★★ 핵심 수정: 측정이 완료되면 해당 채널의 캡처 인터럽트 비활성화 ★★★
 				if (sensor_idx == 0) {
 					__HAL_TIM_DISABLE_IT(htim, TIM_IT_CC1);
 				} else if (sensor_idx == 1) {
@@ -233,6 +271,7 @@ int main(void)
 
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
+	MX_DMA_Init();
 	MX_TIM3_Init();
 	MX_USART1_UART_Init();
 	MX_USART2_UART_Init();
@@ -253,12 +292,12 @@ int main(void)
 	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2);
 	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3);
 
-	// 추후에 할 블루투스 모듈연결 AT command
+	// 블루투스 모듈연결 AT command
 	HAL_UART_Receive_IT(&huart1, &rx1, sizeof(rx1));
 	HAL_UART_Receive_IT(&huart2, &rx2, sizeof(rx2));
 
 	// 초기 속도 설정
-	setSpeed(400);
+	setSpeed(BASE_SPEED);
 
 	/* USER CODE END 2 */
 
@@ -268,130 +307,103 @@ int main(void)
 	{
 		uint32_t currentTime = HAL_GetTick();
 
+		// 60ms마다 센서 측정
+		if(currentTime - lastSensorTime >= ULTRASONIC_DETECTING_TIME)
+		{
+			getUltraSonicTrigger();
+			lastSensorTime = currentTime;
+		}
+		uint8_t right = avgDistance[SENSOR_RIGHT];
+		uint8_t forward = avgDistance[SENSOR_FORWARD];
+		uint8_t left = avgDistance[SENSOR_LEFT];
+
+		printf("R : %2d | F : %2d | L : %2d \n", right, forward, left);
+
 		switch(currentState)
+		{
+		case STATE_NORMAL:
+		{
+			if(forward < SLOW_DISTANCE)
 			{
-				case STATE_NORMAL:
-				{
-					if(currentTime - lastSensorTime >= 60)
-					{
-						getUltraSonicTrigger();
-						measureStartTime = currentTime;
-						currentState = STATE_MEASURING;
-					}
-
-					// 주행 (이전 센서 값으로)
-					uint8_t right = distance[SENSOR_RIGHT];
-					uint8_t forward = distance[SENSOR_FORWARD];
-					uint8_t left = distance[SENSOR_LEFT];
-
-					if(forward < SLOW_DISTANCE && forward > 0)
-					{
-						setSpeed(400);
-
-						if(forward < STOP_DISTANCE && forward > 0)
-						{
-							stopMove();
-							currentState = STATE_STOPPING;
-							stateStartTime = currentTime;
-						}
-					}
-					else if(left < TURN_DISTANCE && left > 0)
-					{
-						turnRightForward();
-					}
-					else if(right < TURN_DISTANCE && right > 0)
-					{
-						turnLeftForward();
-					}
-					else
-					{
-						setSpeed(500);
-						moveForward();
-					}
-					break;
-				}
-
-				case STATE_MEASURING:
-				{
-					// 60ms 후 측정 완료
-					if(currentTime - measureStartTime >= 60)
-					{
-						uint8_t right = distance[SENSOR_RIGHT];
-						uint8_t forward = distance[SENSOR_FORWARD];
-						uint8_t left = distance[SENSOR_LEFT];
-
-						printf("R:%3d | F:%3d | L:%3d\n", right, forward, left);
-
-						lastSensorTime = currentTime;
-						currentState = STATE_NORMAL;
-					}
-
-					// 측정 중에도 기존 동작 유지
-					// (이전 센서 값으로 계속 주행)
-					break;
-				}
-
-				case STATE_STOPPING:
-				{
-					uint32_t elapsed = currentTime - stateStartTime;
-
-					if(elapsed < 150)
-					{
-						stopMove();
-					}
-					else
-					{
-						uint8_t left = distance[SENSOR_LEFT];
-						uint8_t right = distance[SENSOR_RIGHT];
-
-						setSpeed(400);
-						if(left > right)
-						{
-							turnLeftForward();
-						}
-						else
-						{
-							turnRightForward();
-						}
-
-						currentState = STATE_TURNING;
-						stateStartTime = currentTime;
-					}
-					break;
-				}
-
-				case STATE_TURNING:
-				{
-					uint32_t elapsed = currentTime - stateStartTime;
-
-					uint8_t left = distance[SENSOR_LEFT];
-					uint8_t right = distance[SENSOR_RIGHT];
-
-					if(elapsed < 300)
-					{
-						if(left > right)
-						{
-							turnLeftForward();
-						}
-						else
-						{
-							turnRightForward();
-						}
-					}
-					else  // 회전 완료, 정상 주행 복귀
-					{
-						currentState = STATE_NORMAL;
-					}
-					break;
-				}
+				setSpeed(BASE_SPEED - 10);
 			}
-		HAL_Delay(5);
-	}
+			if (forward < STOP_DISTANCE && forward > 0)
+			{
+				currentState = STATE_STOPPING;
+				stateStartTime = currentTime;
+			}
+			else if (left < SIDE_DISTANCE && forward > STOP_DISTANCE)
+			{
+				moveLeft();
+			}
+			else if (right < SIDE_DISTANCE && forward > STOP_DISTANCE)
+			{
+				moveRight();
+			}
+			else
+			{
+				setSpeed(BASE_SPEED);
+				moveForward();
+				currentState = STATE_NORMAL;
+			}
+			break;
+		}
+		case STATE_STOPPING:
+		{
+			uint32_t stopTime = currentTime - stateStartTime;
+
+			if (stopTime < STOP_TIME)
+			{
+				setSpeed(0);
+				stopMove();
+			}
+			else
+			{
+				setSpeed(0);
+				currentState = STATE_TURNING;
+				stateStartTime = currentTime;
+			}
+			break;
+		}
+
+		case STATE_TURNING:
+		{
+			static uint8_t clearCount = 0;
+			static uint8_t prevForward = 0;
+
+			// 정면 거리의 급격한 증가 감지 (예: 30cm 이상)
+			if (forward > prevForward + 25 || forward > STOP_DISTANCE + 10) {
+				clearCount++;
+				if (clearCount >= 2) { // 2회 이상 연속 확인 시 복귀
+					currentState = STATE_NORMAL;
+					setSpeed(BASE_SPEED);
+					clearCount = 0;
+					prevForward = forward;
+					break;
+				}
+			} else {
+				clearCount = 0;
+			}
+
+			prevForward = forward; // 이전 거리 저장
+
+			bool turn_left = (left >= right);
+
+			setSpeed(BASE_SPEED); // 회전 속도 설정
+			if (turn_left) {
+				turnLeftForward();
+			} else {
+				turnRightForward();
+			}
+			break;
+		}
+		}
+
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-		/* USER CODE END 3 */
-
+	}
+	/* USER CODE END 3 */
 }
 
 /**
