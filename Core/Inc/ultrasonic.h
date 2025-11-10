@@ -20,7 +20,16 @@
 #define SENSOR_FORWARD  1
 #define SENSOR_LEFT     2
 
-void getUltraSonicTrigger();
-uint8_t getDistance(uint8_t sensor_idx);
+#define MAX_DISTANCE  100
+
+void getRightTrigger(void);  // 우측
+void getMiddleTrigger(void);  // 정면
+void getLeftTrigger(void);  // 좌측
+
+extern uint16_t IC_Value1[3];
+extern uint16_t IC_Value2[3];
+extern uint16_t echoTime[3];
+extern uint8_t captureFlag[3];
+extern uint8_t distance[3];       // 원본 거리
 
 #endif /* INC_ULTRASONIC_H_ */

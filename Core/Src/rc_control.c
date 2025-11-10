@@ -1,6 +1,6 @@
 #include "rc_control.h"
 
-static uint16_t current_speed = SPEED_NORMAL;
+static uint16_t current_speed = 0;
 
 void setSpeed(uint16_t speed)
 {
@@ -46,8 +46,8 @@ void moveRight()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 1);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 
-	TIM3->CCR1 = current_speed * 1.15;
-	TIM3->CCR2 = current_speed;
+	TIM3->CCR1 = current_speed;
+	TIM3->CCR2 = 0;
 }
 
 // 직진 시 우측 벽에 가까워 질 때 좌측으로 이동
@@ -58,12 +58,12 @@ void moveLeft()
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, 1);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 
-	TIM3->CCR1 = current_speed;
-	TIM3->CCR2 = current_speed * 1.15;
+	TIM3->CCR1 = 0;
+	TIM3->CCR2 = current_speed;
 }
 
 // 왼쪽으로 회전
-void turnLeftForward()
+void turnLeft()
 {
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, 0);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1, 1);
@@ -75,7 +75,7 @@ void turnLeftForward()
 }
 
 // 오른쪽으로 회전
-void turnRightForward()
+void turnRight()
 {
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, 1);
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1, 0);

@@ -9,10 +9,6 @@
 #define RIGHT   0x0008
 #define STOP	0x0000
 
-#define SPEED_NORMAL  500
-#define SPEED_SLOW    300
-#define SPEED_TURN    400
-
 void setSpeed(uint16_t speed);
 
 void stopMove();
@@ -20,8 +16,8 @@ void moveForward();
 void moveBack();
 void moveLeft();
 void moveRight();
-void turnRightForward();
-void turnLeftForward();
+void turnRight();
+void turnLeft();
 void onPressJoyStickKey(uint16_t button);
 
 #endif /* INC_RC_CONTROL_H_ */
