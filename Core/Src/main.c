@@ -55,7 +55,7 @@ typedef enum {
 #define SOF       			0xFF			// 첫 번째 패킷 값이 FF로 고정
 
 #define STOP_DISTANCE    	30              // 정면 정지 거리
-#define DIFF_SIDE_DISTANCE	25
+#define DIFF_SIDE_DISTANCE	30
 
 #define ULTRASONIC_DETECTING_TIME 60		// 초음파 센서 재 인식 시간
 #define STOP_TIME			200
@@ -216,6 +216,16 @@ int main(void)
 		{
 		case STATE_NORMAL:
 		{
+			if (forward < STOP_DISTANCE + 5)
+			{
+				setSpeed(BASE_SPEED - 50);
+			}
+			else
+			{
+				setSpeed(BASE_SPEED);
+			}
+
+
 			if (forward < STOP_DISTANCE && forward > 0)
 			{
 				currentState = STATE_STOPPING;
@@ -223,7 +233,8 @@ int main(void)
 			}
 			else if (abs(diff) > DIFF_SIDE_DISTANCE)
 			{
-				setSpeed(BASE_SPEED);
+
+				setSpeed(BASE_SPEED - 100);
 				if(diff > 0)
 				{
 					moveRight();
@@ -234,6 +245,7 @@ int main(void)
 				}
 				else
 				{
+					setSpeed(BASE_SPEED);
 					moveForward();
 				}
 				currentState = STATE_NORMAL;
@@ -289,7 +301,7 @@ int main(void)
 
 			bool leftOrRight = (left >= right);
 
-			setSpeed(BASE_SPEED - 50); // 회전 속도 설정
+			setSpeed(BASE_SPEED - 100); // 회전 속도 설정
 			if (leftOrRight)
 			{
 				turnLeft();

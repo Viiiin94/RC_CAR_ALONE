@@ -6,7 +6,42 @@ uint16_t echoTime[3] = {0};
 uint8_t captureFlag[3] = {0};
 uint8_t distance[3] = {0}; // 실제 거리
 
-// 콜백 함수
+// ⭐ 이동 평균 큐
+static uint8_t distanceQueue[3][QUEUE_SIZE] = {0};  // 각 센서별 5개 큐
+static uint8_t queueIndex[3] = {0};                  // 큐 인덱스
+static uint16_t queueSum[3] = {0};                   // 합계 (평균 계산용)
+static uint8_t queueCount[3] = {0};                  // 데이터 개수
+
+// ⭐ 큐에 새 값 추가하고 평균 계산
+void addToQueue(uint8_t sensor_idx, uint8_t new_value)
+{
+	if(sensor_idx >= 3) return;
+
+	// 큐가 가득 찬 경우 가장 오래된 값 제거
+	if(queueCount[sensor_idx] >= QUEUE_SIZE)
+	{
+		queueSum[sensor_idx] -= distanceQueue[sensor_idx][queueIndex[sensor_idx]];
+	}
+	else
+	{
+		queueCount[sensor_idx]++;
+	}
+
+	// 새 값 추가
+	distanceQueue[sensor_idx][queueIndex[sensor_idx]] = new_value;
+	queueSum[sensor_idx] += new_value;
+
+	// 인덱스 순환 (0 → 1 → 2 → 3 → 4 → 0)
+	queueIndex[sensor_idx] = (queueIndex[sensor_idx] + 1) % QUEUE_SIZE;
+
+	// 평균 계산
+	if(queueCount[sensor_idx] > 0)
+	{
+		distance[sensor_idx] = queueSum[sensor_idx] / queueCount[sensor_idx];
+	}
+}
+
+// Input Capture 콜백
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance == TIM1)
@@ -55,18 +90,16 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				}
 
 				// 거리 계산 (58us = 1cm)
-//				distance[sensor_idx] = echoTime[sensor_idx] / 58;
 				uint16_t measured_distance = echoTime[sensor_idx] / 58;
 
-				// ⭐ 최대값 제한 (100cm 넘으면 100으로)
+				// 최대값 제한
 				if(measured_distance > MAX_DISTANCE)
 				{
-					distance[sensor_idx] = MAX_DISTANCE;
+					measured_distance = MAX_DISTANCE;
 				}
-				else
-				{
-					distance[sensor_idx] = measured_distance;
-				}
+
+				// ⭐ 큐에 추가하고 평균 계산
+				addToQueue(sensor_idx, measured_distance);
 
 				// 플래그 초기화
 				captureFlag[sensor_idx] = 0;
@@ -84,6 +117,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 		}
 	}
 }
+
 
 // ⭐ 센서 0 트리거 (우측)
 void getRightTrigger(void)

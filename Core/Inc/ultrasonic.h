@@ -21,6 +21,7 @@
 #define SENSOR_LEFT     2
 
 #define MAX_DISTANCE  100
+#define QUEUE_SIZE    4
 
 void getRightTrigger(void);  // 우측
 void getMiddleTrigger(void);  // 정면
