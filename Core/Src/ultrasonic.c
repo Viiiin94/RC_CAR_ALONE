@@ -6,13 +6,13 @@ uint16_t echoTime[3] = {0};
 uint8_t captureFlag[3] = {0};
 uint8_t distance[3] = {0}; // 실제 거리
 
-// ⭐ 이동 평균 큐
+// 이동 평균 큐
 static uint8_t distanceQueue[3][QUEUE_SIZE] = {0};  // 각 센서별 5개 큐
 static uint8_t queueIndex[3] = {0};                  // 큐 인덱스
 static uint16_t queueSum[3] = {0};                   // 합계 (평균 계산용)
 static uint8_t queueCount[3] = {0};                  // 데이터 개수
 
-// ⭐ 큐에 새 값 추가하고 평균 계산
+// 큐에 새 값 추가하고 평균 계산
 void addToQueue(uint8_t sensor_idx, uint8_t new_value)
 {
 	if(sensor_idx >= 3) return;
@@ -31,7 +31,7 @@ void addToQueue(uint8_t sensor_idx, uint8_t new_value)
 	distanceQueue[sensor_idx][queueIndex[sensor_idx]] = new_value;
 	queueSum[sensor_idx] += new_value;
 
-	// 인덱스 순환 (0 → 1 → 2 → 3 → 4 → 0)
+	// 인덱스 순환 (0 → 1 → 2 → 3 → 0)
 	queueIndex[sensor_idx] = (queueIndex[sensor_idx] + 1) % QUEUE_SIZE;
 
 	// 평균 계산
@@ -98,7 +98,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 					measured_distance = MAX_DISTANCE;
 				}
 
-				// ⭐ 큐에 추가하고 평균 계산
+				// 큐에 추가하고 평균 계산
 				addToQueue(sensor_idx, measured_distance);
 
 				// 플래그 초기화
@@ -119,7 +119,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 }
 
 
-// ⭐ 센서 0 트리거 (우측)
+// 센서 0 트리거 (우측)
 void getRightTrigger(void)
 {
 	__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_CC1);
@@ -131,7 +131,7 @@ void getRightTrigger(void)
 	HAL_GPIO_WritePin(TRIG0_PORT, TRIG0_PIN, GPIO_PIN_RESET);
 }
 
-// ⭐ 센서 1 트리거 (정면)
+// 센서 1 트리거 (정면)
 void getMiddleTrigger(void)
 {
 	__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_CC2);
@@ -143,7 +143,7 @@ void getMiddleTrigger(void)
 	HAL_GPIO_WritePin(TRIG1_PORT, TRIG1_PIN, GPIO_PIN_RESET);
 }
 
-// ⭐ 센서 2 트리거 (좌측)
+// 센서 2 트리거 (좌측)
 void getLeftTrigger(void)
 {
 	__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_CC3);
